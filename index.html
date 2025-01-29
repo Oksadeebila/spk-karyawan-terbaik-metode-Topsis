@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistem Penunjang Keputusan</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background-color: #f9f9f9;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+    table, th, td {
+      border: 1px solid #ddd;
+    }
+    th, td {
+      padding: 10px;
+      text-align: center;
+    }
+    th {
+      background-color: #007BFF;
+      color: white;
+    }
+    button, input[type="file"] {
+      background-color: #007BFF;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      cursor: pointer;
+      border-radius: 5px;
+      margin: 10px 0;
+    }
+    button:hover, input[type="file"]:hover {
+      background-color: #0056b3;
+    }
+    .result, .output-section {
+      margin-top: 20px;
+      padding: 10px;
+      background-color: #e7f3fe;
+      border-left: 5px solid #007BFF;
+    }
+    .output-section h3 {
+      margin-bottom: 10px;
+    }
+    canvas {
+      max-width: 100%;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Sistem Penunjang Keputusan untuk Menentukan Karyawan Terbaik </h1>
+
+  <!-- Input file untuk unggah Excel -->
+  <input type="file" id="uploadExcel" accept=".xlsx" />
+  
+  <!-- Button donwload format  -->
+  <button id="downloadTemplate">Unduh Template</button>
+
+  <table id="criteriaTable">
+    <thead>
+      <tr>
+        <th>Nama Karyawan</th>
+        <th>Kedisiplinan</th>
+        <th>Kinerja</th>
+        <th>Kemampuan Kerjasama</th>
+        <th>Produktivitas</th>
+        <th>Lama Bekerja</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Data dari Excel akan dimasukkan ke sini -->
+    </tbody>
+  </table>
+
+  <button id="calculateBtn">Hitung</button>
+
+  <div id="result" class="result" style="display:none;"></div>
+
+  <div id="additionalOutputs" class="output-section" style="display:none;">
+    <h3>Hasil Perhitungan</h3>
+    <div id="details"></div>
+    <div id="ranking"></div>
+    <div id="analysis">
+      <h4>Grafik Tren Kinerja</h4>
+      <canvas id="lineChart"></canvas>
+    </div>
+    <div id="dashboard">
+      <h4>Grafik Skor TOPSIS</h4>
+      <canvas id="barChart"></canvas>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const uploadExcel = document.getElementById('uploadExcel');
+    const criteriaTable = document.getElementById('criteriaTable').querySelector('tbody');
+    const resultDiv = document.getElementById('result');
+    const additionalOutputs = document.getElementById('additionalOutputs');
+    const detailsDiv = document.getElementById('details');
+    const rankingDiv = document.getElementById('ranking');
+    const barChartCanvas = document.getElementById('barChart');
+    const lineChartCanvas = document.getElementById('lineChart');
+
+    let barChart, lineChart;
+
+    // Fungsi untuk membaca file Excel
+    uploadExcel.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(sheet);
+
+          criteriaTable.innerHTML = ''; // Clear table
+
+          // Populate table with data
+          jsonData.forEach((row) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${row['Nama Karyawan'] || ''}</td>
+              <td>${row['Kedisiplinan'] || 0}</td>
+              <td>${row['Kinerja'] || 0}</td>
+              <td>${row['Kemampuan Kerjasama'] || 0}</td>
+              <td>${row['Produktivitas'] || 0}</td>
+              <td>${row['Lama Bekerja'] || 0}</td>
+            `;
+            criteriaTable.appendChild(tr);
+          });
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    });
+
+    // Fungsi perhitungan TOPSIS
+    document.getElementById('calculateBtn').addEventListener('click', () => {
+      const rows = criteriaTable.querySelectorAll('tr');
+      let names = [];
+      let matrix = [];
+
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        names.push(cells[0].textContent);
+        const values = Array.from(cells).slice(1).map(cell => parseFloat(cell.textContent));
+        matrix.push(values);
+      });
+
+      const weights = [0.237, 0.510, 0.050, 0.128, 0.077];
+
+      const normalizeMatrix = (matrix) => {
+        const normalized = [];
+        for (let j = 0; j < matrix[0].length; j++) {
+          let sum = 0;
+          for (let i = 0; i < matrix.length; i++) {
+            sum += matrix[i][j] ** 2;
+          }
+          let sqrtSum = Math.sqrt(sum);
+          normalized.push(matrix.map(row => row[j] / sqrtSum));
+        }
+        return normalized[0].map((_, i) => normalized.map(row => row[i]));
+      };
+
+      const normalizedMatrix = normalizeMatrix(matrix);
+      const weightedMatrix = normalizedMatrix.map(row => row.map((value, i) => value * weights[i]));
+
+      const idealPositive = weightedMatrix[0].map((_, j) => Math.max(...weightedMatrix.map(row => row[j])));
+      const idealNegative = weightedMatrix[0].map((_, j) => Math.min(...weightedMatrix.map(row => row[j])));
+
+      const calculateDistance = (matrix, ideal) => {
+        return matrix.map(row => Math.sqrt(row.reduce((sum, value, i) => sum + (value - ideal[i]) ** 2, 0)));
+      };
+
+      const distancePositive = calculateDistance(weightedMatrix, idealPositive);
+      const distanceNegative = calculateDistance(weightedMatrix, idealNegative);
+
+      const preferenceValues = distanceNegative.map((dNeg, i) => dNeg / (dNeg + distancePositive[i]));
+
+      const results = preferenceValues
+        .map((value, i) => ({ name: names[i], value, original: matrix[i] }))
+        .sort((a, b) => b.value - a.value);
+
+      resultDiv.style.display = 'block';
+      resultDiv.innerHTML = `<strong>Karyawan Terbaik:</strong> ${results[0].name} (Skor: ${results[0].value.toFixed(4)})`;
+
+      additionalOutputs.style.display = 'block';
+
+      // Laporan Detil
+      detailsDiv.innerHTML = `<strong>Detil Pencapaian:</strong><br>` + 
+        results.map(r => `${r.name}: ${r.value.toFixed(4)}`).join('<br>');
+    
+      // Analisis Kelebihan dan Kelemahan
+      const criteriaNames = ['Kedisiplinan', 'Kinerja', 'Kemampuan Kerjasama', 'Produktivitas', 'Lama Bekerja'];
+      const analysisDiv = document.createElement('div');
+      analysisDiv.innerHTML = '<h4>Kelebihan dan Kelemahan</h4>';
+      results.forEach(r => {
+        const maxIndex = r.original.indexOf(Math.max(...r.original));
+        const minIndex = r.original.indexOf(Math.min(...r.original));
+        analysisDiv.innerHTML += `
+            <strong>${r.name}:</strong><br>
+            Kelebihan: ${criteriaNames[maxIndex]} (${r.original[maxIndex]})<br>
+            Kelemahan: ${criteriaNames[minIndex]} (${r.original[minIndex]})<br><br>
+        `;
+      });
+      detailsDiv.appendChild(analysisDiv);    
+
+      // Ranking
+      rankingDiv.innerHTML = `<strong>Ranking:</strong><br>` + 
+        results.map((r, i) => `${i + 1}. ${r.name}`).join('<br>');
+
+      // Grafik Skor TOPSIS (Bar Chart)
+      const labels = results.map(r => r.name);
+      const scores = results.map(r => r.value);
+
+      if (barChart) barChart.destroy();
+      barChart = new Chart(barChartCanvas, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Skor TOPSIS',
+            data: scores,
+            backgroundColor: 'rgba(0, 123, 255, 0.7)',
+            borderColor: 'rgba(0, 123, 255, 1)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: {
+              beginAtZero: true
+            }
+          }
+        }
+      });
+
+      // Grafik Tren Kinerja (Line Chart)
+      const trends = [ // Dummy data tren kinerja
+        { name: "Januari", scores: scores.map(s => s * 0.9) },
+        { name: "Februari", scores: scores.map(s => s * 1.05) },
+        { name: "Maret", scores: scores.map(s => s * 1.1) }
+      ];
+
+      if (lineChart) lineChart.destroy();
+      lineChart = new Chart(lineChartCanvas, {
+        type: 'line',
+        data: {
+          labels: trends.map(t => t.name),
+          datasets: names.map((name, i) => ({
+            label: name,
+            data: trends.map(t => t.scores[i]),
+            borderColor: `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 0.7)`,
+            fill: false
+          }))
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              display: true
+            }
+          }
+        }
+      });
+    });
+
+  
+    document.getElementById('downloadTemplate').addEventListener('click', () => {
+    const wb = XLSX.utils.book_new();
+    const wsData = [
+      ["Nama Karyawan", "Kedisiplinan", "Kinerja", "Kemampuan Kerjasama", "Produktivitas", "Lama Bekerja"],
+      ["Nama 1", 5, 5, 3, 1, 5],
+      ["Nama 2", 4, 1, 4, 2, 4],
+      ["Nama 3", 2, 3, 1, 1, 4]
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    XLSX.utils.book_append_sheet(wb, ws, "Data Karyawan");
+
+    // Simpan file sebagai Excel
+    XLSX.writeFile(wb, "template_karyawan.xlsx");
+  });
+
+
+  </script>
+</body>
+</html>
